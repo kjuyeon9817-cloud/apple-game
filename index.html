@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <title>사과게임</title>
   <style>
     :root {
@@ -23,6 +23,7 @@
 
     html, body {
       height: 100%;
+      height: 100dvh;
       background:
         radial-gradient(ellipse at 20% 0%, #ffe8c4 0%, transparent 50%),
         radial-gradient(ellipse at 90% 20%, #ffd6c8 0%, transparent 40%),
@@ -31,6 +32,10 @@
       font-family: "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
       overflow: hidden;
       user-select: none;
+      touch-action: none;
+      overscroll-behavior: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
     }
 
     body {
@@ -101,8 +106,8 @@
 
     .board-wrap {
       position: relative;
-      width: min(1100px, 100%, calc((100dvh - 140px) * 1.7));
-      aspect-ratio: 17 / 10.4;
+      width: min(1100px, 100%, calc((100dvh - 140px) * var(--cols, 17) / var(--rows, 10)));
+      aspect-ratio: var(--cols, 17) / calc(var(--rows, 10) + 0.35);
       flex: 0 1 auto;
       min-height: 0;
       background: linear-gradient(#f7d7a8, #efc48a);
@@ -120,8 +125,8 @@
       width: 100%;
       height: 100%;
       display: grid;
-      grid-template-columns: repeat(17, 1fr);
-      grid-template-rows: repeat(10, 1fr);
+      grid-template-columns: repeat(var(--cols, 17), 1fr);
+      grid-template-rows: repeat(var(--rows, 10), 1fr);
       gap: 4px;
       padding: 10px;
       touch-action: none;
@@ -171,6 +176,13 @@
     }
 
     .cell.empty .apple { display: none; }
+    .cell.picked .apple {
+      transform: scale(1.08);
+      box-shadow:
+        inset -6px -8px 0 rgba(0, 0, 0, 0.08),
+        0 0 0 3px #fff8c8,
+        0 6px 0 rgba(140, 20, 20, 0.25);
+    }
 
     .selection {
       position: absolute;
@@ -262,19 +274,29 @@
     }
 
     @media (max-width: 720px) {
-      body { padding: 8px; overflow: auto; }
+      body { padding: 8px; overflow: hidden; }
       header {
         flex-direction: column;
         align-items: stretch;
         gap: 8px;
+        margin-bottom: 8px;
       }
       .title { justify-content: flex-start; }
       .hud { justify-content: stretch; }
-      .stat { min-width: 0; flex: 1; padding: 6px 8px; }
-      .stat strong { font-size: 18px; }
-      .board { gap: 2px; padding: 6px; }
+      .stat { min-width: 0; flex: 1; padding: 8px 8px; }
+      .stat span { font-size: 12px; }
+      .stat strong { font-size: 20px; }
+      .board { gap: 5px; padding: 8px; }
+      .apple {
+        width: 94%;
+        max-width: none;
+        font-size: clamp(18px, 5vw, 26px);
+      }
       .board-wrap {
         width: 100%;
+        flex: 1 1 auto;
+        height: auto;
+        max-height: none;
         border-width: 4px;
         border-radius: 16px;
         box-shadow:
@@ -282,8 +304,16 @@
           0 10px 0 var(--wood-dark),
           0 16px 24px var(--shadow);
       }
+      .selection { border-width: 4px; }
+      .sum-chip { top: -22px; font-size: 15px; padding: 5px 10px; }
       .card { padding: 22px 16px; }
       .card h2 { font-size: 24px; }
+      button {
+        min-height: 48px;
+        min-width: 120px;
+        font-size: 18px;
+        padding: 14px 24px;
+      }
     }
   </style>
 </head>
@@ -305,10 +335,10 @@
     <div class="selection" id="selection"><div class="sum-chip" id="sumChip">0</div></div>
     <div class="howto" id="howto">
       <div class="card">
-        <h2>사과를 드래그하세요</h2>
+        <h2>사과를 밀어서 고르세요</h2>
         <p>
-          직사각형으로 사과를 고르고, 숫자의 합이 <strong>정확히 10</strong>이면 사라집니다.<br />
-          2분 동안 최대한 많은 사과를 지워보세요.
+          손가락이나 마우스로 직사각형을 그리세요. 숫자의 합이 <strong>정확히 10</strong>이면 사라집니다.<br />
+          휴대폰에서는 사과가 더 크게 나오고, 칸 전체에 닿으면 선택됩니다.
         </p>
         <button id="startBtn">게임 시작</button>
       </div>
@@ -324,11 +354,10 @@
   </div>
 
   <script>
-    const COLS = 17;
-    const ROWS = 10;
     const TIME = 120;
 
     const boardEl = document.getElementById("board");
+    const wrapEl = boardEl.parentElement;
     const selectionEl = document.getElementById("selection");
     const sumChip = document.getElementById("sumChip");
     const scoreEl = document.getElementById("score");
@@ -338,6 +367,8 @@
     const overEl = document.getElementById("over");
     const resultEl = document.getElementById("result");
 
+    let COLS = 17;
+    let ROWS = 10;
     let cells = [];
     let score = 0;
     let combo = 0;
@@ -346,11 +377,28 @@
     let playing = false;
     let drag = null;
 
+    function boardSize() {
+      const mobile = window.matchMedia("(max-width: 720px)").matches;
+      const landscape = window.matchMedia("(orientation: landscape)").matches;
+      if (mobile && landscape) return { cols: 10, rows: 7 };
+      if (mobile) return { cols: 8, rows: 10 };
+      return { cols: 17, rows: 10 };
+    }
+
+    function applyBoardSize() {
+      const size = boardSize();
+      COLS = size.cols;
+      ROWS = size.rows;
+      document.documentElement.style.setProperty("--cols", String(COLS));
+      document.documentElement.style.setProperty("--rows", String(ROWS));
+    }
+
     function rand(min, max) {
       return Math.floor(Math.random() * (max - min + 1)) + min;
     }
 
     function makeBoard() {
+      applyBoardSize();
       boardEl.innerHTML = "";
       cells = [];
       for (let r = 0; r < ROWS; r++) {
@@ -398,29 +446,46 @@
       overEl.hidden = false;
     }
 
-    function pointInBoard(x, y) {
-      const rect = boardEl.getBoundingClientRect();
-      return {
-        x: Math.min(Math.max(x - rect.left, 0), rect.width),
-        y: Math.min(Math.max(y - rect.top, 0), rect.height),
-      };
+    function cellFromPoint(x, y) {
+      let best = null;
+      let bestDist = Infinity;
+      for (const cell of cells) {
+        const rect = cell.el.getBoundingClientRect();
+        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+          return cell;
+        }
+        const cx = (rect.left + rect.right) / 2;
+        const cy = (rect.top + rect.bottom) / 2;
+        const dist = (cx - x) ** 2 + (cy - y) ** 2;
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = cell;
+        }
+      }
+      return best;
     }
 
     function rangeFromDrag() {
-      const a = pointInBoard(drag.x0, drag.y0);
-      const b = pointInBoard(drag.x1, drag.y1);
-      const left = Math.min(a.x, b.x);
-      const top = Math.min(a.y, b.y);
-      const right = Math.max(a.x, b.x);
-      const bottom = Math.max(a.y, b.y);
-      const rect = boardEl.getBoundingClientRect();
-      const cellW = rect.width / COLS;
-      const cellH = rect.height / ROWS;
-      const c0 = Math.max(0, Math.floor(left / cellW));
-      const r0 = Math.max(0, Math.floor(top / cellH));
-      const c1 = Math.min(COLS - 1, Math.floor((right - 0.01) / cellW));
-      const r1 = Math.min(ROWS - 1, Math.floor((bottom - 0.01) / cellH));
-      return { r0, c0, r1, c1, left, top, right, bottom };
+      const start = cellFromPoint(drag.x0, drag.y0);
+      const end = cellFromPoint(drag.x1, drag.y1);
+      if (!start || !end) return null;
+      const r0 = Math.min(start.r, end.r);
+      const r1 = Math.max(start.r, end.r);
+      const c0 = Math.min(start.c, end.c);
+      const c1 = Math.max(start.c, end.c);
+      const wrap = wrapEl.getBoundingClientRect();
+      const a = cellAt(r0, c0).el.getBoundingClientRect();
+      const b = cellAt(r1, c1).el.getBoundingClientRect();
+      return {
+        r0,
+        c0,
+        r1,
+        c1,
+        left: Math.min(a.left, b.left) - wrap.left,
+        top: Math.min(a.top, b.top) - wrap.top,
+        width: Math.max(a.right, b.right) - Math.min(a.left, b.left),
+        height: Math.max(a.bottom, b.bottom) - Math.min(a.top, b.top),
+      };
     }
 
     function selectedCells(range) {
@@ -434,15 +499,22 @@
       return picked;
     }
 
+    function clearPicked() {
+      cells.forEach((cell) => cell.el.classList.remove("picked"));
+    }
+
     function updateSelection() {
       const range = rangeFromDrag();
+      if (!range) return { picked: [], sum: 0, range: null };
       const picked = selectedCells(range);
       const sum = picked.reduce((acc, cell) => acc + cell.value, 0);
+      clearPicked();
+      picked.forEach((cell) => cell.el.classList.add("picked"));
       selectionEl.style.display = "block";
       selectionEl.style.left = range.left + "px";
       selectionEl.style.top = range.top + "px";
-      selectionEl.style.width = Math.max(8, range.right - range.left) + "px";
-      selectionEl.style.height = Math.max(8, range.bottom - range.top) + "px";
+      selectionEl.style.width = range.width + "px";
+      selectionEl.style.height = range.height + "px";
       selectionEl.className = "selection " + (sum === 10 && picked.length ? "good" : picked.length ? "bad" : "");
       sumChip.textContent = `합 ${sum}`;
       return { picked, sum, range };
@@ -474,24 +546,38 @@
       });
     }
 
+    function eventPoint(e) {
+      if (e.touches && e.touches[0]) return e.touches[0];
+      if (e.changedTouches && e.changedTouches[0]) return e.changedTouches[0];
+      return e;
+    }
+
     function onDown(e) {
       if (!playing) return;
-      const point = e.touches ? e.touches[0] : e;
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      e.preventDefault();
+      const point = eventPoint(e);
       drag = { x0: point.clientX, y0: point.clientY, x1: point.clientX, y1: point.clientY };
+      if (e.pointerId != null && boardEl.setPointerCapture) {
+        boardEl.setPointerCapture(e.pointerId);
+      }
       updateSelection();
     }
 
     function onMove(e) {
       if (!drag || !playing) return;
-      const point = e.touches ? e.touches[0] : e;
+      e.preventDefault();
+      const point = eventPoint(e);
       drag.x1 = point.clientX;
       drag.y1 = point.clientY;
       updateSelection();
     }
 
-    function onUp() {
+    function onUp(e) {
+      if (e) e.preventDefault();
       if (!drag || !playing) {
         drag = null;
+        clearPicked();
         selectionEl.style.display = "none";
         return;
       }
@@ -499,15 +585,17 @@
       if (sum === 10 && picked.length) popApples(picked);
       else combo = 0, comboEl.textContent = "0";
       drag = null;
+      clearPicked();
       selectionEl.style.display = "none";
     }
 
-    boardEl.addEventListener("mousedown", onDown);
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    boardEl.addEventListener("touchstart", onDown, { passive: true });
-    window.addEventListener("touchmove", onMove, { passive: true });
-    window.addEventListener("touchend", onUp);
+    boardEl.addEventListener("pointerdown", onDown);
+    boardEl.addEventListener("pointermove", onMove);
+    boardEl.addEventListener("pointerup", onUp);
+    boardEl.addEventListener("pointercancel", onUp);
+    window.addEventListener("touchmove", (e) => {
+      if (drag || playing) e.preventDefault();
+    }, { passive: false });
 
     document.getElementById("startBtn").onclick = resetGame;
     document.getElementById("retryBtn").onclick = resetGame;
@@ -516,7 +604,14 @@
       howtoEl.hidden = false;
     };
 
+    applyBoardSize();
     makeBoard();
+    window.addEventListener("resize", () => {
+      if (!playing) {
+        applyBoardSize();
+        makeBoard();
+      }
+    });
   </script>
 </body>
 </html>
